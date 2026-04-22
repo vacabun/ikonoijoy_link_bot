@@ -1,0 +1,24 @@
+{
+  "telegram": {
+    "bot_token": "<your_telegram_bot_token>",
+    "chat_id": "<default_chat_id>",
+    "system_chat_id": "",
+    "room_chat_ids": {}
+  },
+  "equal_love": {
+    "username": "<login username or email>",
+    "password": "<login password>",
+    "x_request_verification_key": "<required request verification key, e.g. rvk_XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX>",
+    "x_artist_group_uuid": "<required artist group UUID>"
+  },
+  "runtime": {
+    "data_dir": "data",
+    "auth_cache_path": "data/auth_cache.json",
+    "state_db_path": "data/state.db",
+    "poll_interval_seconds": 300,
+    "page_size": 50,
+    "max_pages_per_room": 5,
+    "startup_replay_count": 2,
+    "forward_history_on_first_run": false
+  }
+}
