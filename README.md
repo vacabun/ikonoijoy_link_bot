@@ -10,7 +10,7 @@ Polls `equal-love.link` talk rooms and forwards new messages to Telegram.
 - Text, image, and video forwarding
 - Optional per-room Telegram routing by room name or room ID
 - Startup replay: sends the latest messages on every start
-- Normal polling skips rooms with `unread = 0`
+- Normal polling checks every accessible room by cursor, not by unread count
 
 ## Project Structure
 
@@ -123,8 +123,9 @@ Text message:
 
 Media messages:
 
-- The first media item includes the caption.
-- Additional media items from the same message are sent without repeating the caption.
+- Multiple photos/videos from the same message are sent as one Telegram media group when possible.
+- The first media item in the group includes the caption.
+- Unsupported media group items fall back to individual sends.
 
 ## Notes
 

@@ -129,15 +129,10 @@ class EqualLoveForwardBot:
             logger.error("Failed to list talk rooms: %s", exc, exc_info=True)
             return 0
 
-        rooms_to_poll = [room for room in rooms if self._should_poll_room(room)]
-        logger.info(
-            "Accessible talk rooms: %d, rooms with unread/new status: %d",
-            len(rooms),
-            len(rooms_to_poll),
-        )
+        logger.info("Accessible talk rooms to poll: %d", len(rooms))
 
         sent_count = 0
-        for room in rooms_to_poll:
+        for room in rooms:
             try:
                 sent_count += self._poll_room(room)
             except Exception as exc:
@@ -244,51 +239,6 @@ class EqualLoveForwardBot:
             len(not_arrived_notifications),
         )
         return [room for room in rooms if room.get("isAccessible")]
-
-    @staticmethod
-    def _should_poll_room(room: dict) -> bool:
-        unread_count = EqualLoveForwardBot._room_unread_count(room)
-        if unread_count is None:
-            logger.info(
-                "Room %s (id=%s) has no unread field, polling as fallback",
-                room.get("name"),
-                room.get("id"),
-            )
-            return True
-
-        if unread_count <= 0:
-            logger.info(
-                "Skip %s (id=%s), unread=%d",
-                room.get("name"),
-                room.get("id"),
-                unread_count,
-            )
-            return False
-
-        logger.info(
-            "Poll %s (id=%s), unread=%d",
-            room.get("name"),
-            room.get("id"),
-            unread_count,
-        )
-        return True
-
-    @staticmethod
-    def _room_unread_count(room: dict) -> int | None:
-        for key in ["unread", "unreadCount", "unread_count", "unreadMessages"]:
-            if key in room and room.get(key) is not None:
-                try:
-                    return int(room[key])
-                except (TypeError, ValueError):
-                    logger.warning(
-                        "Room %s (id=%s) has invalid %s=%r",
-                        room.get("name"),
-                        room.get("id"),
-                        key,
-                        room.get(key),
-                    )
-                    return None
-        return None
 
     @staticmethod
     def _is_forwardable_message(message: dict) -> bool:

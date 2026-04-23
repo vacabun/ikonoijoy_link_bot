@@ -1,4 +1,5 @@
 import io
+import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -73,17 +74,17 @@ class TelegramSender:
             return
 
         caption = self._build_caption(header, text)
-        for index, media in enumerate(media_items):
-            self._log_outgoing_message(
-                chat_id=chat_id,
-                room=room,
-                message=message,
-                send_type=str(media.get("contentType") or "media"),
-                payload=caption if index == 0 else "",
-                media=media,
-            )
-            self._send_media(chat_id, media, caption if index == 0 else None)
-            time.sleep(_SEND_INTERVAL_SEC)
+        self._log_outgoing_message(
+            chat_id=chat_id,
+            room=room,
+            message=message,
+            send_type=self._describe_media_send_type(media_items),
+            payload=caption,
+            media=media_items[0] if media_items else None,
+            media_count=len(media_items),
+        )
+        self._send_media_items(chat_id, media_items, caption)
+        time.sleep(_SEND_INTERVAL_SEC)
 
     def send_system_notification(self, text: str) -> None:
         if not self._system_chat_id:
@@ -109,36 +110,107 @@ class TelegramSender:
         raise RuntimeError(f"No Telegram chat configured for room: {room_name or room_id}")
 
     def _send_media(self, chat_id: str, media: dict, caption: Optional[str]) -> None:
+        prepared_media = self._prepare_media(media)
+        self._send_prepared_media(chat_id, prepared_media, caption)
+
+    def _send_media_items(self, chat_id: str, media_items: list[dict], caption: str) -> None:
+        if len(media_items) == 1:
+            self._send_media(chat_id, media_items[0], caption)
+            return
+
+        prepared_media_items = [self._prepare_media(media) for media in media_items]
+        if all(self._is_media_group_compatible(media) for media in prepared_media_items):
+            for index, chunk in enumerate(self._chunks(prepared_media_items, 10)):
+                self._send_media_group(chat_id, chunk, caption if index == 0 else None)
+                if index < (len(prepared_media_items) - 1) // 10:
+                    time.sleep(_SEND_INTERVAL_SEC)
+            return
+
+        logger.warning("Media group contains unsupported items, falling back to individual sends")
+        for index, media in enumerate(prepared_media_items):
+            self._send_prepared_media(chat_id, media, caption if index == 0 else None)
+            if index < len(prepared_media_items) - 1:
+                time.sleep(_SEND_INTERVAL_SEC)
+
+    def _prepare_media(self, media: dict) -> dict:
         url = media.get("url") or media.get("compressedUrl")
         if not url:
-            self._send_text_raw(chat_id, caption or "[media url missing]")
-            return
+            return {
+                "source": media,
+                "missing_url": True,
+                "content": b"",
+                "content_type": str(media.get("contentType") or "").lower(),
+                "extension": media.get("fileExtension") or "bin",
+                "filename": f"{media.get('id', 'media')}.{media.get('fileExtension') or 'bin'}",
+                "mime_type": "application/octet-stream",
+            }
 
         content = self._download_media(url)
         content_type = str(media.get("contentType") or "").lower()
         extension = media.get("fileExtension") or "bin"
         filename = f"{media.get('id', 'media')}.{extension}"
+        return {
+            "source": media,
+            "missing_url": False,
+            "content": content,
+            "content_type": content_type,
+            "extension": extension,
+            "filename": filename,
+            "mime_type": self._guess_mime_type(content_type, extension),
+        }
 
-        if content_type == "image" and len(content) <= _PHOTO_MAX_BYTES:
+    def _send_prepared_media(self, chat_id: str, media: dict, caption: Optional[str]) -> None:
+        if media["missing_url"]:
+            self._send_text_raw(chat_id, caption or "[media url missing]")
+            return
+
+        if media["content_type"] == "image" and len(media["content"]) <= _PHOTO_MAX_BYTES:
             self._post(
                 "sendPhoto",
                 data={"chat_id": chat_id, "caption": caption or ""},
-                files={"photo": (filename, io.BytesIO(content), self._guess_mime_type(content_type, extension))},
+                files={"photo": (media["filename"], io.BytesIO(media["content"]), media["mime_type"])},
             )
             return
 
-        if content_type == "video" and len(content) <= _VIDEO_MAX_BYTES:
+        if media["content_type"] == "video" and len(media["content"]) <= _VIDEO_MAX_BYTES:
             self._post(
                 "sendVideo",
                 data={"chat_id": chat_id, "caption": caption or ""},
-                files={"video": (filename, io.BytesIO(content), self._guess_mime_type(content_type, extension))},
+                files={"video": (media["filename"], io.BytesIO(media["content"]), media["mime_type"])},
             )
             return
 
         self._post(
             "sendDocument",
             data={"chat_id": chat_id, "caption": caption or ""},
-            files={"document": (filename, io.BytesIO(content), self._guess_mime_type(content_type, extension))},
+            files={"document": (media["filename"], io.BytesIO(media["content"]), media["mime_type"])},
+        )
+
+    def _send_media_group(self, chat_id: str, media_items: list[dict], caption: Optional[str]) -> None:
+        media_payload = []
+        files = {}
+        for index, media in enumerate(media_items):
+            attach_name = f"media{index}"
+            payload_item = {
+                "type": "photo" if media["content_type"] == "image" else "video",
+                "media": f"attach://{attach_name}",
+            }
+            if index == 0 and caption:
+                payload_item["caption"] = caption
+            media_payload.append(payload_item)
+            files[attach_name] = (
+                media["filename"],
+                io.BytesIO(media["content"]),
+                media["mime_type"],
+            )
+
+        self._post(
+            "sendMediaGroup",
+            data={
+                "chat_id": chat_id,
+                "media": json.dumps(media_payload, ensure_ascii=False),
+            },
+            files=files,
         )
 
     def _download_media(self, url: str) -> bytes:
@@ -241,6 +313,7 @@ class TelegramSender:
         send_type: str,
         payload: str,
         media: Optional[dict] = None,
+        media_count: int = 0,
     ) -> None:
         room_name = room.get("name") or message.get("postedUsername") or "unknown"
         preview = payload
@@ -248,18 +321,40 @@ class TelegramSender:
             preview = preview[:_LOG_PREVIEW_MAX_CHARS] + "\n..."
 
         logger.info(
-            "About to send Telegram message: chat_id=%s room=%s room_id=%s message_id=%s type=%s media_id=%s",
+            "About to send Telegram message: chat_id=%s room=%s room_id=%s message_id=%s type=%s media_id=%s media_count=%d",
             chat_id,
             room_name,
             room.get("id"),
             message.get("id"),
             send_type,
             media.get("id") if media else None,
+            media_count,
         )
         if preview:
             logger.info("Outgoing message preview:\n%s", preview)
         elif media:
             logger.info("Outgoing message preview: [media without caption]")
+
+    @staticmethod
+    def _describe_media_send_type(media_items: list[dict]) -> str:
+        if len(media_items) > 1:
+            content_types = sorted({str(media.get("contentType") or "media").lower() for media in media_items})
+            return "media_group:" + ",".join(content_types)
+        return str(media_items[0].get("contentType") or "media") if media_items else "media"
+
+    @staticmethod
+    def _is_media_group_compatible(media: dict) -> bool:
+        if media["missing_url"]:
+            return False
+        if media["content_type"] == "image":
+            return len(media["content"]) <= _PHOTO_MAX_BYTES
+        if media["content_type"] == "video":
+            return len(media["content"]) <= _VIDEO_MAX_BYTES
+        return False
+
+    @staticmethod
+    def _chunks(items: list[dict], size: int) -> list[list[dict]]:
+        return [items[index : index + size] for index in range(0, len(items), size)]
 
     @staticmethod
     def _format_header(room: dict, message: dict) -> str:
