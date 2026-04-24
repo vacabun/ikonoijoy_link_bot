@@ -7,7 +7,7 @@ from typing import Optional
 import requests
 
 AUTH_BASE_URL = "https://api.entertainment-platform-auth.cosm.jp"
-_RUNTIME_DEVICE_UUID: Optional[str] = None
+_RUNTIME_DEVICE_UUIDS: dict[str, str] = {}
 
 _DEFAULT_HEADERS = {
     "user-agent": "io.cosm.fc.user.equal.love/1.3.0/iOS/26.4.1/iPhone",
@@ -46,6 +46,12 @@ def _auth_config(config: dict) -> dict:
     return config
 
 
+def _resolve_auth_config(config_or_path: str | dict) -> dict:
+    if isinstance(config_or_path, dict):
+        return config_or_path
+    return _auth_config(_load_json_file(config_or_path))
+
+
 def _save_json_file(data: dict, path: str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as file:
@@ -65,11 +71,10 @@ def _generate_device_uuid() -> str:
     return f"ios_{uuid.uuid4()}"
 
 
-def get_runtime_device_uuid(regenerate: bool = False) -> str:
-    global _RUNTIME_DEVICE_UUID
-    if regenerate or not _RUNTIME_DEVICE_UUID:
-        _RUNTIME_DEVICE_UUID = _generate_device_uuid()
-    return _RUNTIME_DEVICE_UUID
+def get_runtime_device_uuid(device_key: str = "default", regenerate: bool = False) -> str:
+    if regenerate or device_key not in _RUNTIME_DEVICE_UUIDS:
+        _RUNTIME_DEVICE_UUIDS[device_key] = _generate_device_uuid()
+    return _RUNTIME_DEVICE_UUIDS[device_key]
 
 
 def validate_auth_config(config: dict, require_password: bool = False) -> None:
@@ -96,8 +101,8 @@ def load_auth_cache(cache_path: str) -> dict:
     return cache if isinstance(cache, dict) else {}
 
 
-def load_runtime_auth(config_path: str, cache_path: str) -> dict:
-    config = _auth_config(_load_json_file(config_path))
+def load_runtime_auth(config_or_path: str | dict, cache_path: str, device_key: str = "default") -> dict:
+    config = _resolve_auth_config(config_or_path)
     cache = load_auth_cache(cache_path)
     runtime_auth = {**config, **cache}
 
@@ -106,7 +111,7 @@ def load_runtime_auth(config_path: str, cache_path: str) -> dict:
             if _has_value(config, key):
                 runtime_auth[key] = config[key]
 
-    runtime_auth["x_device_uuid"] = get_runtime_device_uuid()
+    runtime_auth["x_device_uuid"] = get_runtime_device_uuid(device_key=device_key)
     return runtime_auth
 
 
@@ -184,11 +189,11 @@ def refresh_access_token(
     return response.json()
 
 
-def login_and_save(config_path: str, cache_path: str) -> str:
-    config = _auth_config(_load_json_file(config_path))
+def login_and_save(config_or_path: str | dict, cache_path: str, device_key: str = "default") -> str:
+    config = _resolve_auth_config(config_or_path)
     cache = load_auth_cache(cache_path)
     validate_auth_config(config, require_password=True)
-    device_uuid = get_runtime_device_uuid(regenerate=True)
+    device_uuid = get_runtime_device_uuid(device_key=device_key, regenerate=True)
 
     result = login_with_password(
         username=config["username"],
@@ -201,8 +206,8 @@ def login_and_save(config_path: str, cache_path: str) -> str:
     return _save_auth_payload(_extract_auth_payload(result), cache_path)
 
 
-def refresh_and_save(config_path: str, cache_path: str) -> str:
-    config = _auth_config(_load_json_file(config_path))
+def refresh_and_save(config_or_path: str | dict, cache_path: str, device_key: str = "default") -> str:
+    config = _resolve_auth_config(config_or_path)
     cache = load_auth_cache(cache_path)
     validate_auth_config(config)
 
@@ -212,7 +217,7 @@ def refresh_and_save(config_path: str, cache_path: str) -> str:
 
     result = refresh_access_token(
         refresh_token=refresh_token,
-        device_uuid=get_runtime_device_uuid(),
+        device_uuid=get_runtime_device_uuid(device_key=device_key),
         x_request_verification_key=config["x_request_verification_key"],
         x_artist_group_uuid=config["x_artist_group_uuid"],
         authorization=cache.get("authorization") or config.get("authorization"),

@@ -5,20 +5,33 @@
     "system_chat_id": "",
     "room_chat_ids": {}
   },
-  "equal_love": {
-    "username": "<login username or email>",
-    "password": "<login password>",
-    "x_request_verification_key": "<required request verification key, e.g. rvk_XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX>",
-    "x_artist_group_uuid": "<required artist group UUID>"
-  },
+  "equal_love_accounts": [
+    {
+      "name": "main-account",
+      "username": "<login username or email>",
+      "password": "<login password>",
+      "x_request_verification_key": "<required request verification key, e.g. rvk_XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX>",
+      "x_artist_group_uuid": "<required artist group UUID>",
+      "cache_path": "data/auth/main-account.json"
+    },
+    {
+      "name": "second-account",
+      "username": "<second login username or email>",
+      "password": "<second login password>",
+      "x_request_verification_key": "<required request verification key>",
+      "x_artist_group_uuid": "<required artist group UUID>",
+      "cache_path": "data/auth/second-account.json"
+    }
+  ],
   "runtime": {
     "data_dir": "data",
-    "auth_cache_path": "data/auth_cache.json",
+    "auth_cache_dir": "data/auth",
     "state_db_path": "data/state.db",
     "poll_interval_seconds": 300,
     "page_size": 50,
     "max_pages_per_room": 5,
-    "startup_replay_count": 2,
+    "startup_backfill_hours": 48,
+    "startup_fallback_count": 2,
     "forward_history_on_first_run": false
   }
 }

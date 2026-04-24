@@ -39,19 +39,27 @@ def main() -> None:
         system_chat_id=telegram.get("system_chat_id"),
         room_chat_ids=telegram.get("room_chat_ids"),
     )
-    auth_manager = AuthManager(config_path=config_path, cache_path=runtime["auth_cache_path"])
+    auth_managers = [
+        AuthManager(
+            auth_config=account,
+            cache_path=account["cache_path"],
+            name=account["name"],
+        )
+        for account in settings["equal_love_accounts"]
+    ]
     state = StateManager(
         db_path=runtime["state_db_path"],
         initial_cursor=0 if runtime["forward_history_on_first_run"] else None,
     )
     bot = EqualLoveForwardBot(
-        auth_manager=auth_manager,
+        auth_managers=auth_managers,
         sender=sender,
         state=state,
         poll_interval=int(runtime["poll_interval_seconds"]),
         page_size=int(runtime["page_size"]),
         max_pages_per_room=int(runtime["max_pages_per_room"]),
-        startup_replay_count=int(runtime["startup_replay_count"]),
+        startup_backfill_hours=int(runtime["startup_backfill_hours"]),
+        startup_fallback_count=int(runtime["startup_fallback_count"]),
     )
 
     try:

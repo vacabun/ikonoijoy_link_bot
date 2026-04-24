@@ -5,11 +5,13 @@ Polls `equal-love.link` talk rooms and forwards new messages to Telegram.
 ## Features
 
 - Automatic login and access token refresh
+- Supports multiple fanclub accounts at the same time
 - Periodic polling for subscribed and accessible talk rooms
 - Duplicate prevention with SQLite state
 - Text, image, and video forwarding
 - Optional per-room Telegram routing by room name or room ID
-- Startup replay: sends the latest messages on every start
+- Startup backfill: sends unsent messages from the last 48 hours on every start
+- If nothing new was sent in that window, startup falls back to sending the latest two messages
 - Normal polling checks every accessible room by cursor, not by unread count
 
 ## Project Structure
@@ -46,20 +48,33 @@ Example:
       "1": "-1001234567891"
     }
   },
-  "equal_love": {
-    "username": "<login username or email>",
-    "password": "<login password>",
-    "x_request_verification_key": "<required request verification key>",
-    "x_artist_group_uuid": "<required artist group UUID>"
-  },
+  "equal_love_accounts": [
+    {
+      "name": "main-account",
+      "username": "<login username or email>",
+      "password": "<login password>",
+      "x_request_verification_key": "<required request verification key>",
+      "x_artist_group_uuid": "<required artist group UUID>",
+      "cache_path": "data/auth/main-account.json"
+    },
+    {
+      "name": "second-account",
+      "username": "<second login username or email>",
+      "password": "<second login password>",
+      "x_request_verification_key": "<required request verification key>",
+      "x_artist_group_uuid": "<required artist group UUID>",
+      "cache_path": "data/auth/second-account.json"
+    }
+  ],
   "runtime": {
     "data_dir": "data",
-    "auth_cache_path": "data/auth_cache.json",
+    "auth_cache_dir": "data/auth",
     "state_db_path": "data/state.db",
     "poll_interval_seconds": 300,
     "page_size": 50,
     "max_pages_per_room": 5,
-    "startup_replay_count": 2,
+    "startup_backfill_hours": 48,
+    "startup_fallback_count": 2,
     "forward_history_on_first_run": false
   }
 }
@@ -74,22 +89,27 @@ Example:
 
 If a room does not match `room_chat_ids`, messages are sent to `telegram.chat_id`.
 
-### Equal Love
+### Equal Love Accounts
 
-- `equal_love.username`: Login username or email.
-- `equal_love.password`: Login password.
-- `equal_love.x_request_verification_key`: Request verification key from the app traffic.
-- `equal_love.x_artist_group_uuid`: Artist group UUID from the app traffic.
+- `equal_love_accounts`: List of fanclub accounts to poll.
+- `name`: Label used in logs.
+- `username`: Login username or email.
+- `password`: Login password.
+- `x_request_verification_key`: Request verification key from the app traffic.
+- `x_artist_group_uuid`: Artist group UUID from the app traffic.
+- `cache_path`: Token cache file for that account.
 
-Tokens are stored in `runtime.auth_cache_path`. If the access token expires, the bot refreshes it automatically. If refresh fails, it logs in again with username/password.
+Each account keeps its own token cache. If the access token expires, the bot refreshes it automatically. If refresh fails, it logs in again with username/password.
 
 ### Runtime
 
 - `runtime.poll_interval_seconds`: Seconds between polling cycles.
 - `runtime.page_size`: Chat page size for API requests.
 - `runtime.max_pages_per_room`: Maximum pages fetched per room in one cycle.
-- `runtime.startup_replay_count`: Number of latest messages to send for each accessible room on startup.
+- `runtime.startup_backfill_hours`: On startup, send unsent messages from the last N hours.
+- `runtime.startup_fallback_count`: If startup backfill finds nothing new, send the latest N messages instead.
 - `runtime.forward_history_on_first_run`: If `false`, first run starts from the current time and does not backfill old messages.
+- `runtime.auth_cache_dir`: Default directory for account cache files if an account does not set `cache_path`.
 
 ## Run
 
@@ -132,4 +152,5 @@ Media messages:
 - Add the bot to your Telegram channel/chat before running.
 - Give the bot permission to send messages.
 - Use a test channel first to verify routing.
-- Keep `config.json` and `data/auth_cache.json` private.
+- Keep `config.json` and your token cache files under `data/auth/` private.
+- If multiple accounts subscribe to the same member, the bot de-duplicates by room/message ID and only sends once.
