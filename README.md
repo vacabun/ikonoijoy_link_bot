@@ -146,6 +146,7 @@ Media messages:
 - Multiple photos/videos from the same message are sent as one Telegram media group when possible.
 - The first media item in the group includes the caption.
 - Unsupported media group items fall back to individual sends.
+- Images up to 10 MB are sent as photos. Images from 10 MB to 30 MB are sent as files.
 
 ## Notes
 

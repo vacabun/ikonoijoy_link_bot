@@ -10,7 +10,8 @@ import requests
 logger = logging.getLogger(__name__)
 
 _JST = timezone(timedelta(hours=9))
-_PHOTO_MAX_BYTES = 30 * 1024 * 1024
+_PHOTO_MAX_BYTES = 10 * 1024 * 1024
+_IMAGE_DOCUMENT_MAX_BYTES = 30 * 1024 * 1024
 _VIDEO_MAX_BYTES = 50 * 1024 * 1024
 _SEND_INTERVAL_SEC = 1.0
 _LOG_PREVIEW_MAX_CHARS = 1200
@@ -180,14 +181,20 @@ class TelegramSender:
             return
 
         prepared_media_items = [self._prepare_media(media) for media in media_items]
+        fallback_reason = "Media group contains unsupported items"
         if all(self._is_media_group_compatible(media) for media in prepared_media_items):
-            for index, chunk in enumerate(self._chunks(prepared_media_items, 10)):
-                self._send_media_group(chat_id, chunk, caption if index == 0 else None)
-                if index < (len(prepared_media_items) - 1) // 10:
-                    time.sleep(_SEND_INTERVAL_SEC)
-            return
+            try:
+                for index, chunk in enumerate(self._chunks(prepared_media_items, 10)):
+                    self._send_media_group(chat_id, chunk, caption if index == 0 else None)
+                    if index < (len(prepared_media_items) - 1) // 10:
+                        time.sleep(_SEND_INTERVAL_SEC)
+                return
+            except RuntimeError as exc:
+                if "HTTP 413" not in str(exc):
+                    raise
+                fallback_reason = "Media group is too large"
 
-        logger.warning("Media group contains unsupported items, falling back to individual sends")
+        logger.warning("%s, falling back to individual sends", fallback_reason)
         for index, media in enumerate(prepared_media_items):
             self._send_prepared_media(chat_id, media, caption if index == 0 else None)
             if index < len(prepared_media_items) - 1:
@@ -232,6 +239,11 @@ class TelegramSender:
                 files={"photo": (media["filename"], io.BytesIO(media["content"]), media["mime_type"])},
             )
             return
+
+        if media["content_type"] == "image" and len(media["content"]) > _IMAGE_DOCUMENT_MAX_BYTES:
+            raise RuntimeError(
+                f"Image is larger than {_IMAGE_DOCUMENT_MAX_BYTES // 1024 // 1024}MB and cannot be sent"
+            )
 
         if media["content_type"] == "video" and len(media["content"]) <= _VIDEO_MAX_BYTES:
             self._post(
