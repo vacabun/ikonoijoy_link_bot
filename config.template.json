@@ -3,7 +3,9 @@
     "bot_token": "<your_telegram_bot_token>",
     "chat_id": "<default_chat_id>",
     "system_chat_id": "",
-    "room_chat_ids": {}
+    "room_chat_ids": {
+      "大谷 映美里": ["-1001234567890", "-1001234567891"]
+    }
   },
   "equal_love_accounts": [
     {

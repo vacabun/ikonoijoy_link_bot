@@ -27,20 +27,20 @@ class TelegramSender:
         bot_token: str,
         default_chat_id: Optional[str] = None,
         system_chat_id: Optional[str] = None,
-        room_chat_ids: Optional[dict[str, str]] = None,
+        room_chat_ids: Optional[dict[str, object]] = None,
     ):
         self._default_chat_id = default_chat_id.strip() if default_chat_id and default_chat_id.strip() else None
         self._system_chat_id = system_chat_id.strip() if system_chat_id and system_chat_id.strip() else None
         self._room_chat_ids = {
-            str(key).strip(): str(value).strip()
+            str(key).strip(): chat_ids
             for key, value in (room_chat_ids or {}).items()
-            if str(key).strip() and str(value).strip()
+            if str(key).strip() and (chat_ids := self._normalize_chat_ids(value))
         }
 
         if not self._system_chat_id:
             self._system_chat_id = self._default_chat_id
         if not self._system_chat_id and self._room_chat_ids:
-            self._system_chat_id = next(iter(self._room_chat_ids.values()))
+            self._system_chat_id = next(iter(self._room_chat_ids.values()))[0]
         if not self._default_chat_id and not self._room_chat_ids:
             raise ValueError("telegram.chat_id or telegram.room_chat_ids must be configured.")
 
@@ -49,18 +49,50 @@ class TelegramSender:
 
     def describe_routes(self) -> list[str]:
         routes = []
-        for room_key, chat_id in self._room_chat_ids.items():
-            routes.append(f"{room_key} -> {chat_id}")
+        for room_key, chat_ids in self._room_chat_ids.items():
+            routes.append(f"{room_key} -> {', '.join(chat_ids)}")
         if self._default_chat_id:
             routes.append(f"default -> {self._default_chat_id}")
         return routes
 
     def send_message(self, room: dict, message: dict) -> None:
-        chat_id = self._resolve_chat_id(room)
+        try:
+            chat_ids = self._resolve_chat_ids(room)
+        except RuntimeError as exc:
+            self._notify_missing_route(room, message, str(exc))
+            raise
+
         header = self._format_header(room, message)
         text = self._normalize_text(message.get("textContent"))
         media_items = message.get("chatMedia") or []
 
+        success_count = 0
+        for chat_id in chat_ids:
+            try:
+                self._send_message_to_chat(
+                    chat_id=chat_id,
+                    room=room,
+                    message=message,
+                    header=header,
+                    text=text,
+                    media_items=media_items,
+                )
+                success_count += 1
+            except Exception as exc:
+                logger.error("Failed to send Telegram message to chat_id=%s: %s", chat_id, exc, exc_info=True)
+
+        if success_count == 0:
+            raise RuntimeError("Failed to send Telegram message to every configured chat")
+
+    def _send_message_to_chat(
+        self,
+        chat_id: str,
+        room: dict,
+        message: dict,
+        header: str,
+        text: str,
+        media_items: list[dict],
+    ) -> None:
         if not media_items:
             self._log_outgoing_message(
                 chat_id=chat_id,
@@ -96,7 +128,7 @@ class TelegramSender:
         except Exception as exc:
             logger.error("Failed to send system notification: %s", exc)
 
-    def _resolve_chat_id(self, room: dict) -> str:
+    def _resolve_chat_ids(self, room: dict) -> list[str]:
         room_id = str(room.get("id", "")).strip()
         room_name = str(room.get("name", "")).strip()
 
@@ -105,9 +137,38 @@ class TelegramSender:
                 return self._room_chat_ids[key]
 
         if self._default_chat_id:
-            return self._default_chat_id
+            return [self._default_chat_id]
 
         raise RuntimeError(f"No Telegram chat configured for room: {room_name or room_id}")
+
+    def _notify_missing_route(self, room: dict, message: dict, error: str) -> None:
+        room_name = str(room.get("name") or message.get("postedUsername") or "unknown").strip()
+        room_id = str(room.get("id") or "").strip() or "unknown"
+        message_id = str(message.get("id") or "").strip() or "unknown"
+        self.send_system_notification(
+            "\n".join(
+                [
+                    "Telegram routing error",
+                    error,
+                    f"room: {room_name}",
+                    f"room_id: {room_id}",
+                    f"message_id: {message_id}",
+                    "Set telegram.chat_id or add this room to telegram.room_chat_ids.",
+                ]
+            )
+        )
+
+    @staticmethod
+    def _normalize_chat_ids(value: object) -> list[str]:
+        if isinstance(value, list):
+            return [
+                chat_id
+                for item in value
+                if (chat_id := str(item).strip())
+            ]
+
+        chat_id = str(value).strip() if value is not None else ""
+        return [chat_id] if chat_id else []
 
     def _send_media(self, chat_id: str, media: dict, caption: Optional[str]) -> None:
         prepared_media = self._prepare_media(media)

@@ -44,8 +44,8 @@ Example:
     "chat_id": "<default_chat_id>",
     "system_chat_id": "",
     "room_chat_ids": {
-      "大谷 映美里": "-1001234567890",
-      "1": "-1001234567891"
+      "大谷 映美里": ["-1001234567890", "-1001234567891"],
+      "1": "-1001234567892"
     }
   },
   "equal_love_accounts": [
@@ -85,9 +85,9 @@ Example:
 - `telegram.bot_token`: Telegram bot token.
 - `telegram.chat_id`: Default destination chat/channel ID.
 - `telegram.system_chat_id`: Optional chat/channel for startup and shutdown notifications. Falls back to `chat_id` if empty.
-- `telegram.room_chat_ids`: Optional per-room routing map. Keys can be talk room names or talk room ID strings.
+- `telegram.room_chat_ids`: Optional per-room routing map. Keys can be talk room names or talk room ID strings. Values can be one chat ID string or a list of chat ID strings.
 
-If a room does not match `room_chat_ids`, messages are sent to `telegram.chat_id`.
+If a room matches multiple chat IDs in `room_chat_ids`, the message is sent to each configured chat. If a room does not match `room_chat_ids`, messages are sent to `telegram.chat_id`. If `telegram.chat_id` is empty too, the bot sends a routing error to `telegram.system_chat_id` and leaves the message unsent.
 
 ### Equal Love Accounts
 

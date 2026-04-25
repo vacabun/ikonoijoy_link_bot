@@ -35,9 +35,9 @@ def load_settings(config_path: str = "config.json") -> dict[str, Any]:
     if not isinstance(room_chat_ids, dict):
         raise ValueError("telegram.room_chat_ids must be a JSON object.")
     telegram["room_chat_ids"] = {
-        str(key).strip(): str(value).strip()
+        str(key).strip(): chat_ids
         for key, value in room_chat_ids.items()
-        if str(key).strip() and str(value).strip() and not _is_placeholder(value)
+        if str(key).strip() and (chat_ids := _normalize_chat_ids(value))
     }
     if not telegram.get("chat_id") and not telegram.get("room_chat_ids"):
         raise ValueError("telegram.chat_id or telegram.room_chat_ids must be configured.")
@@ -80,6 +80,24 @@ def _validate_required(section: dict[str, Any], keys: list[str], section_name: s
 
 def _is_placeholder(value: object) -> bool:
     return isinstance(value, str) and value.strip().startswith("<") and value.strip().endswith(">")
+
+
+def _normalize_chat_ids(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [
+            chat_id
+            for item in value
+            if (chat_id := _normalize_chat_id(item))
+        ]
+
+    chat_id = _normalize_chat_id(value)
+    return [chat_id] if chat_id else []
+
+
+def _normalize_chat_id(value: object) -> str:
+    if value is None or _is_placeholder(value):
+        return ""
+    return str(value).strip()
 
 
 def _normalize_equal_love_accounts(
