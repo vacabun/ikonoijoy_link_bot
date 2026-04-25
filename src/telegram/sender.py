@@ -10,7 +10,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 _JST = timezone(timedelta(hours=9))
-_PHOTO_MAX_BYTES = 10 * 1024 * 1024
+_PHOTO_MAX_BYTES = 30 * 1024 * 1024
 _VIDEO_MAX_BYTES = 50 * 1024 * 1024
 _SEND_INTERVAL_SEC = 1.0
 _LOG_PREVIEW_MAX_CHARS = 1200
