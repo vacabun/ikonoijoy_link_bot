@@ -44,7 +44,13 @@ Example:
     "chat_id": "<default_chat_id>",
     "system_chat_id": "",
     "room_chat_ids": {
-      "大谷 映美里": ["-1001234567890", "-1001234567891"],
+      "大谷 映美里": [
+        "-1001234567890",
+        {
+          "chat_id": "-1001234567891",
+          "message_thread_id": 123
+        }
+      ],
       "1": "-1001234567892"
     }
   },
@@ -85,9 +91,20 @@ Example:
 - `telegram.bot_token`: Telegram bot token.
 - `telegram.chat_id`: Default destination chat/channel ID.
 - `telegram.system_chat_id`: Optional chat/channel for startup and shutdown notifications. Falls back to `chat_id` if empty.
-- `telegram.room_chat_ids`: Optional per-room routing map. Keys can be talk room names or talk room ID strings. Values can be one chat ID string or a list of chat ID strings.
+- `telegram.room_chat_ids`: Optional per-room routing map. Keys can be talk room names or talk room ID strings. Values can be one chat ID string, a list of chat ID strings, a target object, or a list of target objects.
 
 If a room matches multiple chat IDs in `room_chat_ids`, the message is sent to each configured chat. If a room does not match `room_chat_ids`, messages are sent to `telegram.chat_id`. If `telegram.chat_id` is empty too, the bot sends a routing error to `telegram.system_chat_id` and leaves the message unsent.
+
+To send to a forum topic in a supergroup, use a target object:
+
+```json
+{
+  "chat_id": "-1001234567891",
+  "message_thread_id": 123
+}
+```
+
+`message_thread_id` only works for Telegram forum topics in supergroups. Plain channels do not support topic routing this way.
 
 ### Equal Love Accounts
 

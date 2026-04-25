@@ -82,22 +82,44 @@ def _is_placeholder(value: object) -> bool:
     return isinstance(value, str) and value.strip().startswith("<") and value.strip().endswith(">")
 
 
-def _normalize_chat_ids(value: object) -> list[str]:
+def _normalize_chat_ids(value: object) -> list[dict[str, Any]]:
     if isinstance(value, list):
         return [
-            chat_id
+            target
             for item in value
-            if (chat_id := _normalize_chat_id(item))
+            if (target := _normalize_chat_target(item))
         ]
 
+    target = _normalize_chat_target(value)
+    return [target] if target else []
+
+
+def _normalize_chat_target(value: object) -> dict[str, Any]:
+    if isinstance(value, dict):
+        chat_id = _normalize_chat_id(value.get("chat_id"))
+        if not chat_id:
+            return {}
+
+        target: dict[str, Any] = {"chat_id": chat_id}
+        thread_id = _normalize_message_thread_id(value.get("message_thread_id"))
+        if thread_id is not None:
+            target["message_thread_id"] = thread_id
+        return target
+
     chat_id = _normalize_chat_id(value)
-    return [chat_id] if chat_id else []
+    return {"chat_id": chat_id} if chat_id else {}
 
 
 def _normalize_chat_id(value: object) -> str:
     if value is None or _is_placeholder(value):
         return ""
     return str(value).strip()
+
+
+def _normalize_message_thread_id(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)
 
 
 def _normalize_equal_love_accounts(

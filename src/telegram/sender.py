@@ -33,15 +33,15 @@ class TelegramSender:
         self._default_chat_id = default_chat_id.strip() if default_chat_id and default_chat_id.strip() else None
         self._system_chat_id = system_chat_id.strip() if system_chat_id and system_chat_id.strip() else None
         self._room_chat_ids = {
-            str(key).strip(): chat_ids
+            str(key).strip(): targets
             for key, value in (room_chat_ids or {}).items()
-            if str(key).strip() and (chat_ids := self._normalize_chat_ids(value))
+            if str(key).strip() and (targets := self._normalize_chat_targets(value))
         }
 
         if not self._system_chat_id:
             self._system_chat_id = self._default_chat_id
         if not self._system_chat_id and self._room_chat_ids:
-            self._system_chat_id = next(iter(self._room_chat_ids.values()))[0]
+            self._system_chat_id = str(next(iter(self._room_chat_ids.values()))[0]["chat_id"])
         if not self._default_chat_id and not self._room_chat_ids:
             raise ValueError("telegram.chat_id or telegram.room_chat_ids must be configured.")
 
@@ -50,15 +50,15 @@ class TelegramSender:
 
     def describe_routes(self) -> list[str]:
         routes = []
-        for room_key, chat_ids in self._room_chat_ids.items():
-            routes.append(f"{room_key} -> {', '.join(chat_ids)}")
+        for room_key, targets in self._room_chat_ids.items():
+            routes.append(f"{room_key} -> {', '.join(self._format_target(target) for target in targets)}")
         if self._default_chat_id:
             routes.append(f"default -> {self._default_chat_id}")
         return routes
 
     def send_message(self, room: dict, message: dict) -> None:
         try:
-            chat_ids = self._resolve_chat_ids(room)
+            targets = self._resolve_targets(room)
         except RuntimeError as exc:
             self._notify_missing_route(room, message, str(exc))
             raise
@@ -68,10 +68,10 @@ class TelegramSender:
         media_items = message.get("chatMedia") or []
 
         success_count = 0
-        for chat_id in chat_ids:
+        for target in targets:
             try:
-                self._send_message_to_chat(
-                    chat_id=chat_id,
+                self._send_message_to_target(
+                    target=target,
                     room=room,
                     message=message,
                     header=header,
@@ -80,14 +80,19 @@ class TelegramSender:
                 )
                 success_count += 1
             except Exception as exc:
-                logger.error("Failed to send Telegram message to chat_id=%s: %s", chat_id, exc, exc_info=True)
+                logger.error(
+                    "Failed to send Telegram message to target=%s: %s",
+                    self._format_target(target),
+                    exc,
+                    exc_info=True,
+                )
 
         if success_count == 0:
             raise RuntimeError("Failed to send Telegram message to every configured chat")
 
-    def _send_message_to_chat(
+    def _send_message_to_target(
         self,
-        chat_id: str,
+        target: dict[str, object],
         room: dict,
         message: dict,
         header: str,
@@ -96,19 +101,19 @@ class TelegramSender:
     ) -> None:
         if not media_items:
             self._log_outgoing_message(
-                chat_id=chat_id,
+                target=target,
                 room=room,
                 message=message,
                 send_type="text",
                 payload=header if not text else f"{header}\n\n{text}",
             )
-            self._send_text(chat_id, header, text)
+            self._send_text(target, header, text)
             time.sleep(_SEND_INTERVAL_SEC)
             return
 
         caption = self._build_caption(header, text)
         self._log_outgoing_message(
-            chat_id=chat_id,
+            target=target,
             room=room,
             message=message,
             send_type=self._describe_media_send_type(media_items),
@@ -116,7 +121,7 @@ class TelegramSender:
             media=media_items[0] if media_items else None,
             media_count=len(media_items),
         )
-        self._send_media_items(chat_id, media_items, caption)
+        self._send_media_items(target, media_items, caption)
         time.sleep(_SEND_INTERVAL_SEC)
 
     def send_system_notification(self, text: str) -> None:
@@ -129,7 +134,7 @@ class TelegramSender:
         except Exception as exc:
             logger.error("Failed to send system notification: %s", exc)
 
-    def _resolve_chat_ids(self, room: dict) -> list[str]:
+    def _resolve_targets(self, room: dict) -> list[dict[str, object]]:
         room_id = str(room.get("id", "")).strip()
         room_name = str(room.get("name", "")).strip()
 
@@ -138,7 +143,7 @@ class TelegramSender:
                 return self._room_chat_ids[key]
 
         if self._default_chat_id:
-            return [self._default_chat_id]
+            return [{"chat_id": self._default_chat_id}]
 
         raise RuntimeError(f"No Telegram chat configured for room: {room_name or room_id}")
 
@@ -160,24 +165,61 @@ class TelegramSender:
         )
 
     @staticmethod
-    def _normalize_chat_ids(value: object) -> list[str]:
+    def _normalize_chat_targets(value: object) -> list[dict[str, object]]:
         if isinstance(value, list):
             return [
-                chat_id
+                target
                 for item in value
-                if (chat_id := str(item).strip())
+                if (target := TelegramSender._normalize_chat_target(item))
             ]
 
+        target = TelegramSender._normalize_chat_target(value)
+        return [target] if target else []
+
+    @staticmethod
+    def _normalize_chat_target(value: object) -> dict[str, object]:
+        if isinstance(value, dict):
+            chat_id = str(value.get("chat_id") or "").strip()
+            if not chat_id:
+                return {}
+            target: dict[str, object] = {"chat_id": chat_id}
+            thread_id = value.get("message_thread_id")
+            if thread_id is not None and thread_id != "":
+                target["message_thread_id"] = int(thread_id)
+            return target
+
         chat_id = str(value).strip() if value is not None else ""
-        return [chat_id] if chat_id else []
+        return {"chat_id": chat_id} if chat_id else {}
 
-    def _send_media(self, chat_id: str, media: dict, caption: Optional[str]) -> None:
+    @staticmethod
+    def _message_thread_id(target: dict[str, object]) -> Optional[int]:
+        thread_id = target.get("message_thread_id")
+        return int(thread_id) if thread_id is not None else None
+
+    @staticmethod
+    def _target_data(target: dict[str, object], **extra: object) -> dict[str, object]:
+        data = {"chat_id": str(target["chat_id"])}
+        thread_id = TelegramSender._message_thread_id(target)
+        if thread_id is not None:
+            data["message_thread_id"] = thread_id
+        data.update(extra)
+        return data
+
+    @staticmethod
+    def _format_target(target: dict[str, object]) -> str:
+        chat_id = str(target["chat_id"])
+        thread_id = TelegramSender._message_thread_id(target)
+        if thread_id is None:
+            return chat_id
+        return f"{chat_id}#topic:{thread_id}"
+
+    def _send_media(self, target: dict[str, object], media: dict, caption: Optional[str]) -> None:
         prepared_media = self._prepare_media(media)
-        self._send_prepared_media(chat_id, prepared_media, caption)
+        self._send_prepared_media(target, prepared_media, caption)
 
-    def _send_media_items(self, chat_id: str, media_items: list[dict], caption: str) -> None:
+    def _send_media_items(self, target: dict[str, object], media_items: list[dict], caption: str) -> None:
         if len(media_items) == 1:
-            self._send_media(chat_id, media_items[0], caption)
+            self._send_media(target, media_items[0], caption)
             return
 
         prepared_media_items = [self._prepare_media(media) for media in media_items]
@@ -185,7 +227,7 @@ class TelegramSender:
         if all(self._is_media_group_compatible(media) for media in prepared_media_items):
             try:
                 for index, chunk in enumerate(self._chunks(prepared_media_items, 10)):
-                    self._send_media_group(chat_id, chunk, caption if index == 0 else None)
+                    self._send_media_group(target, chunk, caption if index == 0 else None)
                     if index < (len(prepared_media_items) - 1) // 10:
                         time.sleep(_SEND_INTERVAL_SEC)
                 return
@@ -196,7 +238,7 @@ class TelegramSender:
 
         logger.warning("%s, falling back to individual sends", fallback_reason)
         for index, media in enumerate(prepared_media_items):
-            self._send_prepared_media(chat_id, media, caption if index == 0 else None)
+            self._send_prepared_media(target, media, caption if index == 0 else None)
             if index < len(prepared_media_items) - 1:
                 time.sleep(_SEND_INTERVAL_SEC)
 
@@ -227,15 +269,19 @@ class TelegramSender:
             "mime_type": self._guess_mime_type(content_type, extension),
         }
 
-    def _send_prepared_media(self, chat_id: str, media: dict, caption: Optional[str]) -> None:
+    def _send_prepared_media(self, target: dict[str, object], media: dict, caption: Optional[str]) -> None:
         if media["missing_url"]:
-            self._send_text_raw(chat_id, caption or "[media url missing]")
+            self._send_text_raw(
+                str(target["chat_id"]),
+                caption or "[media url missing]",
+                message_thread_id=self._message_thread_id(target),
+            )
             return
 
         if media["content_type"] == "image" and len(media["content"]) <= _PHOTO_MAX_BYTES:
             self._post(
                 "sendPhoto",
-                data={"chat_id": chat_id, "caption": caption or ""},
+                data=self._target_data(target, caption=caption or ""),
                 files={"photo": (media["filename"], io.BytesIO(media["content"]), media["mime_type"])},
             )
             return
@@ -248,18 +294,23 @@ class TelegramSender:
         if media["content_type"] == "video" and len(media["content"]) <= _VIDEO_MAX_BYTES:
             self._post(
                 "sendVideo",
-                data={"chat_id": chat_id, "caption": caption or ""},
+                data=self._target_data(target, caption=caption or ""),
                 files={"video": (media["filename"], io.BytesIO(media["content"]), media["mime_type"])},
             )
             return
 
         self._post(
             "sendDocument",
-            data={"chat_id": chat_id, "caption": caption or ""},
+            data=self._target_data(target, caption=caption or ""),
             files={"document": (media["filename"], io.BytesIO(media["content"]), media["mime_type"])},
         )
 
-    def _send_media_group(self, chat_id: str, media_items: list[dict], caption: Optional[str]) -> None:
+    def _send_media_group(
+        self,
+        target: dict[str, object],
+        media_items: list[dict],
+        caption: Optional[str],
+    ) -> None:
         media_payload = []
         files = {}
         for index, media in enumerate(media_items):
@@ -279,10 +330,7 @@ class TelegramSender:
 
         self._post(
             "sendMediaGroup",
-            data={
-                "chat_id": chat_id,
-                "media": json.dumps(media_payload, ensure_ascii=False),
-            },
+            data=self._target_data(target, media=json.dumps(media_payload, ensure_ascii=False)),
             files=files,
         )
 
@@ -361,26 +409,39 @@ class TelegramSender:
 
         return f"HTTP {response.status_code}: {response.reason or 'Unknown error'}"
 
-    def _send_text(self, chat_id: str, header: str, text: str) -> None:
+    def _send_text(self, target: dict[str, object], header: str, text: str) -> None:
         payload = header if not text else f"{header}\n\n{text}"
-        self._send_text_raw(chat_id, payload)
+        self._send_text_raw(
+            str(target["chat_id"]),
+            payload,
+            message_thread_id=self._message_thread_id(target),
+        )
 
-    def _send_text_raw(self, chat_id: str, text: str) -> None:
+    def _send_text_raw(
+        self,
+        chat_id: str,
+        text: str,
+        message_thread_id: Optional[int] = None,
+    ) -> None:
         if len(text) > 4096:
             text = text[:4090] + "\n..."
 
+        payload: dict[str, object] = {
+            "chat_id": chat_id,
+            "text": text,
+            "disable_web_page_preview": False,
+        }
+        if message_thread_id is not None:
+            payload["message_thread_id"] = message_thread_id
+
         self._post(
             "sendMessage",
-            json={
-                "chat_id": chat_id,
-                "text": text,
-                "disable_web_page_preview": False,
-            },
+            json=payload,
         )
 
     @staticmethod
     def _log_outgoing_message(
-        chat_id: str,
+        target: dict[str, object],
         room: dict,
         message: dict,
         send_type: str,
@@ -394,8 +455,8 @@ class TelegramSender:
             preview = preview[:_LOG_PREVIEW_MAX_CHARS] + "\n..."
 
         logger.info(
-            "About to send Telegram message: chat_id=%s room=%s room_id=%s message_id=%s type=%s media_id=%s media_count=%d",
-            chat_id,
+            "About to send Telegram message: target=%s room=%s room_id=%s message_id=%s type=%s media_id=%s media_count=%d",
+            TelegramSender._format_target(target),
             room_name,
             room.get("id"),
             message.get("id"),

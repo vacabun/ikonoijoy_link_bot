@@ -4,7 +4,13 @@
     "chat_id": "<default_chat_id>",
     "system_chat_id": "",
     "room_chat_ids": {
-      "大谷 映美里": ["-1001234567890", "-1001234567891"]
+      "大谷 映美里": [
+        "-1001234567890",
+        {
+          "chat_id": "-1001234567891",
+          "message_thread_id": 123
+        }
+      ]
     }
   },
   "equal_love_accounts": [
