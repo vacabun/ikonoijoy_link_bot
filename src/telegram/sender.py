@@ -232,9 +232,9 @@ class TelegramSender:
                         time.sleep(_SEND_INTERVAL_SEC)
                 return
             except RuntimeError as exc:
-                if "HTTP 413" not in str(exc):
+                if "HTTP 413" not in str(exc) and not self._is_photo_send_error(exc):
                     raise
-                fallback_reason = "Media group is too large"
+                fallback_reason = "Media group cannot be sent as an album"
 
         logger.warning("%s, falling back to individual sends", fallback_reason)
         for index, media in enumerate(prepared_media_items):
@@ -279,11 +279,21 @@ class TelegramSender:
             return
 
         if media["content_type"] == "image" and len(media["content"]) <= _PHOTO_MAX_BYTES:
-            self._post(
-                "sendPhoto",
-                data=self._target_data(target, caption=caption or ""),
-                files={"photo": (media["filename"], io.BytesIO(media["content"]), media["mime_type"])},
-            )
+            try:
+                self._post(
+                    "sendPhoto",
+                    data=self._target_data(target, caption=caption or ""),
+                    files={"photo": (media["filename"], io.BytesIO(media["content"]), media["mime_type"])},
+                )
+            except RuntimeError as exc:
+                if not self._is_photo_send_error(exc):
+                    raise
+                logger.warning(
+                    "Telegram rejected image as photo (%s), sending as document: %s",
+                    exc,
+                    media["filename"],
+                )
+                self._send_image_document(target, media, caption)
             return
 
         if media["content_type"] == "image" and len(media["content"]) > _IMAGE_DOCUMENT_MAX_BYTES:
@@ -298,6 +308,18 @@ class TelegramSender:
                 files={"video": (media["filename"], io.BytesIO(media["content"]), media["mime_type"])},
             )
             return
+
+        self._post(
+            "sendDocument",
+            data=self._target_data(target, caption=caption or ""),
+            files={"document": (media["filename"], io.BytesIO(media["content"]), media["mime_type"])},
+        )
+
+    def _send_image_document(self, target: dict[str, object], media: dict, caption: Optional[str]) -> None:
+        if len(media["content"]) > _IMAGE_DOCUMENT_MAX_BYTES:
+            raise RuntimeError(
+                f"Image is larger than {_IMAGE_DOCUMENT_MAX_BYTES // 1024 // 1024}MB and cannot be sent"
+            )
 
         self._post(
             "sendDocument",
@@ -408,6 +430,19 @@ class TelegramSender:
             return f"HTTP {response.status_code}: {text}"
 
         return f"HTTP {response.status_code}: {response.reason or 'Unknown error'}"
+
+    @staticmethod
+    def _is_photo_send_error(exc: Exception) -> bool:
+        error = str(exc)
+        return any(
+            marker in error
+            for marker in [
+                "PHOTO_INVALID_DIMENSIONS",
+                "PHOTO_EXT_INVALID",
+                "IMAGE_PROCESS_FAILED",
+                "WEBPAGE_CURL_FAILED",
+            ]
+        )
 
     def _send_text(self, target: dict[str, object], header: str, text: str) -> None:
         payload = header if not text else f"{header}\n\n{text}"

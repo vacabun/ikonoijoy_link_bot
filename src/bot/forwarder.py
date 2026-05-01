@@ -137,8 +137,22 @@ class EqualLoveForwardBot:
 
         sent_count = 0
         for message in messages_to_send:
-            self._sender.send_message(room, message)
-            self._state.mark_sent(room_id, int(message["id"]))
+            message_id = int(message["id"])
+            try:
+                self._sender.send_message(room, message)
+            except Exception as exc:
+                logger.error(
+                    "Failed to send startup message %s for %s (id=%s) via %s: %s",
+                    message_id,
+                    room.get("name"),
+                    room_id,
+                    account.name,
+                    exc,
+                    exc_info=True,
+                )
+                continue
+
+            self._state.mark_sent(room_id, message_id)
             sent_count += 1
 
         logger.info(
@@ -186,21 +200,46 @@ class EqualLoveForwardBot:
             return 0
 
         sent_count = 0
+        failed_count = 0
         latest_posted_at = cursor
+        cursor_blocked = False
         for message in sorted(messages, key=lambda item: (int(item.get("postedDate") or 0), int(item.get("id") or 0))):
             message_id = int(message["id"])
             posted_at = int(message.get("postedDate") or 0)
             if self._state.is_sent(room_id, message_id):
-                latest_posted_at = max(latest_posted_at, posted_at)
+                if not cursor_blocked:
+                    latest_posted_at = max(latest_posted_at, posted_at)
                 continue
 
-            self._sender.send_message(room, message)
+            try:
+                self._sender.send_message(room, message)
+            except Exception as exc:
+                failed_count += 1
+                cursor_blocked = True
+                logger.error(
+                    "Failed to send message %s for %s (id=%s) via %s; continuing with newer messages: %s",
+                    message_id,
+                    room_name,
+                    room_id,
+                    account.name,
+                    exc,
+                    exc_info=True,
+                )
+                continue
+
             self._state.mark_sent(room_id, message_id)
-            latest_posted_at = max(latest_posted_at, posted_at)
+            if not cursor_blocked:
+                latest_posted_at = max(latest_posted_at, posted_at)
             sent_count += 1
 
         self._state.set_cursor(room_id, latest_posted_at)
-        logger.info("Sent %d messages for %s via %s", sent_count, room_name, account.name)
+        logger.info(
+            "Sent %d messages for %s via %s (failed=%d)",
+            sent_count,
+            room_name,
+            account.name,
+            failed_count,
+        )
         return sent_count
 
     def _refresh_campaign_status(self, account: BotAccount) -> dict:
