@@ -2,6 +2,9 @@
 .env
 .env.*
 config.json
+config.love.json
+config.me.json
+config/
 data/
 ref/
 

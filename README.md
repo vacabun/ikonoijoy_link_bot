@@ -16,13 +16,16 @@ Polls `equal-love.link` talk rooms and forwards new messages to Telegram.
 
 ## Project Structure
 
-- `main.py`: root entry point; loads `config.json` and starts the bot
+- `main.py`: root entry point; loads one config file or a directory of config files and starts the bot
 - `src/bot/forwarder.py`: polling and forwarding workflow
 - `src/telegram/sender.py`: Telegram Bot API sender
 - `src/storage/state.py`: SQLite state management
 - `src/auth/credentials.py`: login and token refresh helpers
 - `src/auth/manager.py`: auth lifecycle and client rebuilds
-- `src/clients/equal_love.py`: equal-love.link API client
+- `src/clients/base.py`: Base talk API client
+- `src/clients/equal_love.py`: Equal Love app profile
+- `src/clients/not_equal_me.py`: Not Equal Me app profile
+- `src/clients/registry.py`: App profile lookup and client factory
 - `src/config/settings.py`: JSON config loader and validator
 
 ## Configuration
@@ -54,9 +57,10 @@ Example:
       "1": "-1001234567892"
     }
   },
-  "equal_love_accounts": [
+  "accounts": [
     {
       "name": "main-account",
+      "app": "equal-love",
       "username": "<login username or email>",
       "password": "<login password>",
       "x_request_verification_key": "<required request verification key>",
@@ -65,6 +69,7 @@ Example:
     },
     {
       "name": "second-account",
+      "app": "not-equal-me",
       "username": "<second login username or email>",
       "password": "<second login password>",
       "x_request_verification_key": "<required request verification key>",
@@ -75,7 +80,7 @@ Example:
   "runtime": {
     "data_dir": "data",
     "auth_cache_dir": "data/auth",
-    "state_db_path": "data/state.db",
+    "state_db_path": "",
     "poll_interval_seconds": 300,
     "page_size": 50,
     "max_pages_per_room": 5,
@@ -108,8 +113,9 @@ To send to a forum topic in a supergroup, use a target object:
 
 ### Equal Love Accounts
 
-- `equal_love_accounts`: List of fanclub accounts to poll.
+- `accounts`: List of fanclub accounts to poll.
 - `name`: Label used in logs.
+- `app`: App profile for this account. Use `equal-love` or `not-equal-me`; the bot automatically selects the matching API base URL and `user-agent`.
 - `username`: Login username or email.
 - `password`: Login password.
 - `x_request_verification_key`: Request verification key from the app traffic.
@@ -127,6 +133,7 @@ Each account keeps its own token cache. If the access token expires, the bot ref
 - `runtime.startup_fallback_count`: If startup backfill finds nothing new, send the latest N messages instead.
 - `runtime.forward_history_on_first_run`: If `false`, first run starts from the current time and does not backfill old messages.
 - `runtime.auth_cache_dir`: Default directory for account cache files if an account does not set `cache_path`.
+- `runtime.state_db_path`: Optional SQLite state path. If empty, it defaults by app, for example `data/state.equal_love.db` or `data/state.not_equal_me.db`, to avoid cross-app duplicate suppression.
 
 ## Run
 
@@ -147,6 +154,14 @@ Use a custom config path:
 ```bash
 python main.py path/to/config.json
 ```
+
+Use a config directory:
+
+```bash
+python main.py path/to/configs
+```
+
+When a directory is provided, every `*.json` file in that directory is started in its own bot thread. Files ending in `.template.json` are skipped.
 
 ## Forwarded Message Format
 

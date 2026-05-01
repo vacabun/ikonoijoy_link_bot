@@ -13,9 +13,10 @@
       ]
     }
   },
-  "equal_love_accounts": [
+  "accounts": [
     {
       "name": "main-account",
+      "app": "equal-love",
       "username": "<login username or email>",
       "password": "<login password>",
       "x_request_verification_key": "<required request verification key, e.g. rvk_XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX>",
@@ -24,6 +25,7 @@
     },
     {
       "name": "second-account",
+      "app": "not-equal-me",
       "username": "<second login username or email>",
       "password": "<second login password>",
       "x_request_verification_key": "<required request verification key>",
@@ -34,7 +36,7 @@
   "runtime": {
     "data_dir": "data",
     "auth_cache_dir": "data/auth",
-    "state_db_path": "data/state.db",
+    "state_db_path": "",
     "poll_interval_seconds": 300,
     "page_size": 50,
     "max_pages_per_room": 5,

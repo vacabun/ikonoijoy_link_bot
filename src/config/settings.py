@@ -2,6 +2,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+from src.clients.registry import (
+    app_profile,
+    app_profile_from_base_url,
+    normalize_app_name,
+)
+
 
 def load_settings(config_path: str = "config.json") -> dict[str, Any]:
     with open(config_path, encoding="utf-8") as file:
@@ -14,11 +20,13 @@ def load_settings(config_path: str = "config.json") -> dict[str, Any]:
     settings.setdefault("telegram", {})
     settings.setdefault("equal_love", {})
     settings.setdefault("equal_love_accounts", [])
+    settings.setdefault("accounts", [])
 
     runtime = settings["runtime"]
     telegram = settings["telegram"]
     equal_love = settings["equal_love"]
     equal_love_accounts = settings["equal_love_accounts"]
+    accounts = settings["accounts"]
 
     if not isinstance(runtime, dict):
         raise ValueError("runtime must be a JSON object.")
@@ -28,7 +36,10 @@ def load_settings(config_path: str = "config.json") -> dict[str, Any]:
         raise ValueError("equal_love must be a JSON object.")
     if not isinstance(equal_love_accounts, list):
         raise ValueError("equal_love_accounts must be a JSON array.")
+    if not isinstance(accounts, list):
+        raise ValueError("accounts must be a JSON array.")
 
+    state_db_path_configured = bool(runtime.get("state_db_path")) and not _is_placeholder(runtime.get("state_db_path"))
     _apply_runtime_defaults(runtime)
     _validate_required(telegram, ["bot_token"], "telegram")
     room_chat_ids = telegram.get("room_chat_ids") or {}
@@ -43,12 +54,18 @@ def load_settings(config_path: str = "config.json") -> dict[str, Any]:
         raise ValueError("telegram.chat_id or telegram.room_chat_ids must be configured.")
 
     normalized_accounts = _normalize_equal_love_accounts(
-        accounts=equal_love_accounts,
+        accounts=equal_love_accounts or accounts,
         legacy_account=equal_love,
         runtime=runtime,
     )
     if not normalized_accounts:
         raise ValueError("At least one equal-love account must be configured.")
+    _apply_state_db_default(
+        runtime=runtime,
+        accounts=normalized_accounts,
+        config_path=config_path,
+        state_db_path_configured=state_db_path_configured,
+    )
     settings["equal_love_accounts"] = normalized_accounts
 
     return settings
@@ -59,13 +76,31 @@ def _apply_runtime_defaults(runtime: dict[str, Any]) -> None:
     runtime["data_dir"] = data_dir
     runtime.setdefault("auth_cache_path", str(Path(data_dir) / "auth_cache.json"))
     runtime.setdefault("auth_cache_dir", str(Path(data_dir) / "auth"))
-    runtime.setdefault("state_db_path", str(Path(data_dir) / "state.db"))
     runtime.setdefault("poll_interval_seconds", 300)
     runtime.setdefault("page_size", 50)
     runtime.setdefault("max_pages_per_room", 5)
     runtime.setdefault("startup_backfill_hours", 48)
     runtime.setdefault("startup_fallback_count", 2)
     runtime.setdefault("forward_history_on_first_run", False)
+
+
+def _apply_state_db_default(
+    *,
+    runtime: dict[str, Any],
+    accounts: list[dict[str, Any]],
+    config_path: str,
+    state_db_path_configured: bool,
+) -> None:
+    if state_db_path_configured:
+        return
+
+    data_dir = Path(str(runtime["data_dir"]))
+    apps = sorted({str(account.get("app") or "equal_love") for account in accounts})
+    if len(apps) == 1:
+        state_name = f"state.{apps[0]}.db"
+    else:
+        state_name = f"state.{_slugify_account_name(Path(config_path).stem)}.db"
+    runtime["state_db_path"] = str(data_dir / state_name)
 
 
 def _validate_required(section: dict[str, Any], keys: list[str], section_name: str) -> None:
@@ -149,6 +184,25 @@ def _normalize_equal_love_accounts(
 
         name = str(normalized_account.get("name") or f"account-{index}").strip()
         normalized_account["name"] = name
+        app = normalized_account.get("app")
+        base_url = normalized_account.get("base_url")
+        if app and not _is_placeholder(app):
+            profile_name = normalize_app_name(str(app))
+            profile = app_profile(profile_name)
+        elif base_url and not _is_placeholder(base_url):
+            profile = app_profile_from_base_url(str(base_url))
+            profile_name = ""
+        else:
+            profile_name = "equal_love"
+            profile = app_profile(profile_name)
+        normalized_account["base_url"] = str(profile["base_url"]).strip().rstrip("/")
+        user_agent = normalized_account.get("user_agent")
+        if not user_agent or _is_placeholder(user_agent):
+            user_agent = profile["user_agent"]
+        normalized_account["user_agent"] = str(user_agent).strip()
+        if profile_name:
+            normalized_account["app"] = profile_name
+
         cache_path = normalized_account.get("cache_path")
         if not cache_path or _is_placeholder(cache_path):
             if len(source_accounts) == 1 and runtime.get("auth_cache_path"):

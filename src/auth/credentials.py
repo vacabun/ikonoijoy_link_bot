@@ -6,11 +6,12 @@ from typing import Optional
 
 import requests
 
+from src.clients.registry import DEFAULT_USER_AGENT
+
 AUTH_BASE_URL = "https://api.entertainment-platform-auth.cosm.jp"
 _RUNTIME_DEVICE_UUIDS: dict[str, str] = {}
 
 _DEFAULT_HEADERS = {
-    "user-agent": "io.cosm.fc.user.equal.love/1.3.0/iOS/26.4.1/iPhone",
     "accept-language": "ja",
     "accept-encoding": "gzip",
     "content-type": "application/json",
@@ -22,9 +23,11 @@ def _build_headers(
     x_request_verification_key: str,
     x_artist_group_uuid: str,
     authorization: Optional[str] = None,
+    user_agent: str = DEFAULT_USER_AGENT,
 ) -> dict:
     headers = {
         **_DEFAULT_HEADERS,
+        "user-agent": user_agent,
         "x-request-verification-key": x_request_verification_key,
         "x-artist-group-uuid": x_artist_group_uuid,
         "x-device-uuid": device_uuid,
@@ -144,6 +147,7 @@ def login_with_password(
     x_request_verification_key: str,
     x_artist_group_uuid: str,
     authorization: Optional[str] = None,
+    user_agent: str = DEFAULT_USER_AGENT,
 ) -> dict:
     response = requests.post(
         f"{AUTH_BASE_URL}/login",
@@ -152,6 +156,7 @@ def login_with_password(
             x_request_verification_key=x_request_verification_key,
             x_artist_group_uuid=x_artist_group_uuid,
             authorization=authorization,
+            user_agent=user_agent,
         ),
         json={
             "username": username,
@@ -170,6 +175,7 @@ def refresh_access_token(
     x_request_verification_key: str,
     x_artist_group_uuid: str,
     authorization: Optional[str] = None,
+    user_agent: str = DEFAULT_USER_AGENT,
 ) -> dict:
     response = requests.post(
         f"{AUTH_BASE_URL}/token/refresh",
@@ -178,6 +184,7 @@ def refresh_access_token(
             x_request_verification_key=x_request_verification_key,
             x_artist_group_uuid=x_artist_group_uuid,
             authorization=authorization,
+            user_agent=user_agent,
         ),
         json={
             "refreshToken": refresh_token,
@@ -202,6 +209,7 @@ def login_and_save(config_or_path: str | dict, cache_path: str, device_key: str 
         x_request_verification_key=config["x_request_verification_key"],
         x_artist_group_uuid=config["x_artist_group_uuid"],
         authorization=cache.get("authorization") or config.get("authorization"),
+        user_agent=config.get("user_agent", DEFAULT_USER_AGENT),
     )
     return _save_auth_payload(_extract_auth_payload(result), cache_path)
 
@@ -221,5 +229,6 @@ def refresh_and_save(config_or_path: str | dict, cache_path: str, device_key: st
         x_request_verification_key=config["x_request_verification_key"],
         x_artist_group_uuid=config["x_artist_group_uuid"],
         authorization=cache.get("authorization") or config.get("authorization"),
+        user_agent=config.get("user_agent", DEFAULT_USER_AGENT),
     )
     return _save_auth_payload(_extract_auth_payload(result), cache_path)

@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -7,7 +8,7 @@ from typing import Callable
 from requests import HTTPError
 
 from src.auth.manager import AuthManager
-from src.clients.equal_love import EqualLoveClient
+from src.clients.base import BaseTalkClient
 from src.storage.state import StateManager
 from src.telegram.sender import TelegramSender
 
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 class BotAccount:
     name: str
     auth_manager: AuthManager
-    client: EqualLoveClient
+    client: BaseTalkClient
 
 
 class EqualLoveForwardBot:
@@ -36,6 +37,7 @@ class EqualLoveForwardBot:
         max_pages_per_room: int = 5,
         startup_backfill_hours: int = 48,
         startup_fallback_count: int = 2,
+        stop_event: threading.Event | None = None,
     ):
         self._accounts = [
             BotAccount(
@@ -52,6 +54,10 @@ class EqualLoveForwardBot:
         self._max_pages_per_room = max_pages_per_room
         self._startup_backfill_hours = startup_backfill_hours
         self._startup_fallback_count = startup_fallback_count
+        self._stop_event = stop_event or threading.Event()
+
+    def stop(self) -> None:
+        self._stop_event.set()
 
     def run(self) -> None:
         notification_lines = [
@@ -70,7 +76,7 @@ class EqualLoveForwardBot:
 
         logger.info("=== Bot started ===")
         self.send_startup_messages()
-        while True:
+        while not self._stop_event.is_set():
             started_at = time.time()
             sent_count = self.run_once()
             elapsed = time.time() - started_at
@@ -80,7 +86,7 @@ class EqualLoveForwardBot:
                 elapsed,
                 self._poll_interval,
             )
-            time.sleep(max(0, self._poll_interval - elapsed))
+            self._stop_event.wait(max(0, self._poll_interval - elapsed))
 
     def send_startup_messages(self) -> int:
         if self._startup_backfill_hours <= 0:
@@ -325,7 +331,7 @@ class EqualLoveForwardBot:
         return int(cutoff.timestamp())
 
     @staticmethod
-    def _list_accessible_rooms(account_name: str, client: EqualLoveClient) -> list[dict]:
+    def _list_accessible_rooms(account_name: str, client: BaseTalkClient) -> list[dict]:
         response = client.get_talk_rooms()
         data = response.get("data", {})
         total_unread = int(data.get("totalUnreadCount") or 0)
@@ -384,7 +390,7 @@ class EqualLoveForwardBot:
 
         return sorted(room_providers.values(), key=lambda item: int(item[1]["id"]))
 
-    def _request_with_reauth(self, account: BotAccount, request: Callable[[EqualLoveClient], dict | list]) -> dict | list:
+    def _request_with_reauth(self, account: BotAccount, request: Callable[[BaseTalkClient], dict | list]) -> dict | list:
         try:
             return request(account.client)
         except HTTPError as exc:
